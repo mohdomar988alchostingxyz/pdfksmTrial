@@ -32,7 +32,7 @@ jobs:
             -v /home/runner/desktop-data/config:/config \
             lscr.io/linuxserver/webtop:ubuntu-xfce
 
-      - name: Install Vivaldi and RustDesk
+            - name: Install Vivaldi and RustDesk
         run: |
           echo "Waiting for Kasm workspace to initialize..."
           sleep 15
@@ -51,10 +51,10 @@ jobs:
           docker exec -u root vnc bash -c "rm rustdesk-1.3.1-x86_64.deb"
           
           echo "Creating Desktop Shortcuts..."
-          # Make sure the Desktop folder exists
-          docker exec -u abc vnc bash -c "mkdir -p /config/Desktop"
+          # Using root (-u root) to bypass the permission denied error
+          docker exec -u root vnc bash -c "mkdir -p /config/Desktop"
           
-          docker exec -u abc vnc bash -c 'cat <<EOF > /config/Desktop/Vivaldi.desktop
+          docker exec -u root vnc bash -c 'cat <<EOF > /config/Desktop/Vivaldi.desktop
           [Desktop Entry]
           Name=Vivaldi Browser
           Exec=vivaldi-stable --disable-gpu --disable-software-rasterizer --no-sandbox --disable-dev-shm-usage
@@ -62,7 +62,7 @@ jobs:
           Type=Application
           EOF'
           
-          docker exec -u abc vnc bash -c 'cat <<EOF > /config/Desktop/RustDesk.desktop
+          docker exec -u root vnc bash -c 'cat <<EOF > /config/Desktop/RustDesk.desktop
           [Desktop Entry]
           Name=RustDesk
           Exec=rustdesk
@@ -70,7 +70,7 @@ jobs:
           Type=Application
           EOF'
           
-          docker exec -u abc vnc bash -c 'cat <<EOF > /config/Desktop/SAVE_AND_SHUTDOWN.desktop
+          docker exec -u root vnc bash -c 'cat <<EOF > /config/Desktop/SAVE_AND_SHUTDOWN.desktop
           [Desktop Entry]
           Name=💾 SAVE AND SHUTDOWN
           Exec=bash -c "touch /config/Desktop/SAVE && notify-send \"Saving Data...\" \"Do not close the browser yet!\""
@@ -78,15 +78,18 @@ jobs:
           Type=Application
           EOF'
           
-          docker exec -u abc vnc bash -c "chmod +x /config/Desktop/*.desktop"
+          # Fix permissions and hand them back to the 'abc' user
+          docker exec -u root vnc bash -c "chmod +x /config/Desktop/*.desktop"
+          docker exec -u root vnc bash -c "chown -R abc:abc /config/Desktop"
 
           echo "Setting up RustDesk Autostart..."
-          docker exec -u abc vnc bash -c "mkdir -p /config/.config/autostart"
-          docker exec -u abc vnc bash -c "cp /config/Desktop/RustDesk.desktop /config/.config/autostart/"
+          docker exec -u root vnc bash -c "mkdir -p /config/.config/autostart"
+          docker exec -u root vnc bash -c "cp /config/Desktop/RustDesk.desktop /config/.config/autostart/"
+          docker exec -u root vnc bash -c "chown -R abc:abc /config/.config/autostart"
           
           echo "Forcing RustDesk to start instantly in the background..."
+          # Run Rustdesk normally as the 'abc' user
           docker exec -d -u abc vnc bash -c "DISPLAY=:1 rustdesk"
-
       - name: Install and Start Cloudflared
         run: |
           echo "Starting Cloudflare HTTP Tunnel..."
