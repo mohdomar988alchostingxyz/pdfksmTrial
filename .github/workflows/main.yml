@@ -32,7 +32,7 @@ jobs:
             -v /home/runner/desktop-data/config:/config \
             lscr.io/linuxserver/webtop:ubuntu-xfce
 
-            - name: Install Vivaldi and RustDesk
+      - name: Install Vivaldi and RustDesk
         run: |
           echo "Waiting for Kasm workspace to initialize..."
           sleep 15
