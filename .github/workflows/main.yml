@@ -21,9 +21,8 @@ jobs:
       - name: Start KasmVNC Desktop Environment (XFCE)
         run: |
           echo "Starting Ubuntu XFCE Desktop with KasmVNC..."
-          # We use linuxserver/webtop which is built on KasmVNC.
-          # Mapped to port 3000. Added shm-size and seccomp for browser stability.
-          docker run -d --name vnc -p 3000:3000 \
+          # Added port 3001 for secure WebSockets
+          docker run -d --name vnc -p 3000:3000 -p 3001:3001 \
             --hostname web-desktop \
             --mac-address 02:42:00:11:22:33 \
             --security-opt seccomp=unconfined \
@@ -90,13 +89,15 @@ jobs:
           echo "Forcing RustDesk to start instantly in the background..."
           # Run Rustdesk normally as the 'abc' user
           docker exec -d -u abc vnc bash -c "DISPLAY=:1 rustdesk"
+
       - name: Install and Start Cloudflared
         run: |
-          echo "Starting Cloudflare HTTP Tunnel..."
+          echo "Starting Cloudflare HTTPS Tunnel..."
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared-linux-amd64
-          # KasmVNC uses port 3000
-          ./cloudflared-linux-amd64 tunnel --url http://localhost:3000 > cloudflare.log 2>&1 &
+          
+          # Routing to the secure port 3001 and bypassing TLS verification to fix WebSockets
+          ./cloudflared-linux-amd64 tunnel --url https://localhost:3001 --no-tls-verify > cloudflare.log 2>&1 &
           
           sleep 10
           CF_URL=$(grep -a -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" cloudflare.log | head -n 1)
