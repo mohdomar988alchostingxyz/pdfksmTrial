@@ -1,0 +1,123 @@
+name: Web Desktop (KasmVNC + Vivaldi + RustDesk)
+on:
+  workflow_dispatch:
+jobs:
+  web-desktop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Restore Desktop Data
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/desktop-data
+          key: kasm-desktop-data-${{ github.run_id }}
+          restore-keys: |
+            kasm-desktop-data-
+
+      - name: Ensure Data Directories Exist
+        run: |
+          mkdir -p /home/runner/desktop-data/config
+
+      - name: Start KasmVNC Desktop Environment (XFCE)
+        run: |
+          echo "Starting Ubuntu XFCE Desktop with KasmVNC..."
+          # We use linuxserver/webtop which is built on KasmVNC.
+          # Mapped to port 3000. Added shm-size and seccomp for browser stability.
+          docker run -d --name vnc -p 3000:3000 \
+            --hostname web-desktop \
+            --mac-address 02:42:00:11:22:33 \
+            --security-opt seccomp=unconfined \
+            --shm-size="2gb" \
+            -e PUID=1000 -e PGID=1000 -e TZ=UTC \
+            -v /home/runner/desktop-data/config:/config \
+            lscr.io/linuxserver/webtop:ubuntu-xfce
+
+      - name: Install Vivaldi and RustDesk
+        run: |
+          echo "Waiting for Kasm workspace to initialize..."
+          sleep 15
+          
+          echo "Installing prerequisites..."
+          docker exec -u root vnc bash -c "apt-get update && apt-get install -y wget apt-transport-https curl"
+          
+          echo "Installing Vivaldi Browser..."
+          docker exec -u root vnc bash -c "wget -q https://downloads.vivaldi.com/stable/vivaldi-stable_amd64.deb"
+          docker exec -u root vnc bash -c "apt-get install -y ./vivaldi-stable_amd64.deb || apt-get --fix-broken install -y"
+          docker exec -u root vnc bash -c "rm vivaldi-stable_amd64.deb"
+          
+          echo "Installing RustDesk..."
+          docker exec -u root vnc bash -c "wget -q https://github.com/rustdesk/rustdesk/releases/download/1.3.1/rustdesk-1.3.1-x86_64.deb"
+          docker exec -u root vnc bash -c "apt-get install -y ./rustdesk-1.3.1-x86_64.deb || apt-get --fix-broken install -y"
+          docker exec -u root vnc bash -c "rm rustdesk-1.3.1-x86_64.deb"
+          
+          echo "Creating Desktop Shortcuts..."
+          # Make sure the Desktop folder exists
+          docker exec -u abc vnc bash -c "mkdir -p /config/Desktop"
+          
+          docker exec -u abc vnc bash -c 'cat <<EOF > /config/Desktop/Vivaldi.desktop
+          [Desktop Entry]
+          Name=Vivaldi Browser
+          Exec=vivaldi-stable --disable-gpu --disable-software-rasterizer --no-sandbox --disable-dev-shm-usage
+          Icon=vivaldi
+          Type=Application
+          EOF'
+          
+          docker exec -u abc vnc bash -c 'cat <<EOF > /config/Desktop/RustDesk.desktop
+          [Desktop Entry]
+          Name=RustDesk
+          Exec=rustdesk
+          Icon=rustdesk
+          Type=Application
+          EOF'
+          
+          docker exec -u abc vnc bash -c 'cat <<EOF > /config/Desktop/SAVE_AND_SHUTDOWN.desktop
+          [Desktop Entry]
+          Name=💾 SAVE AND SHUTDOWN
+          Exec=bash -c "touch /config/Desktop/SAVE && notify-send \"Saving Data...\" \"Do not close the browser yet!\""
+          Icon=system-shutdown
+          Type=Application
+          EOF'
+          
+          docker exec -u abc vnc bash -c "chmod +x /config/Desktop/*.desktop"
+
+          echo "Setting up RustDesk Autostart..."
+          docker exec -u abc vnc bash -c "mkdir -p /config/.config/autostart"
+          docker exec -u abc vnc bash -c "cp /config/Desktop/RustDesk.desktop /config/.config/autostart/"
+          
+          echo "Forcing RustDesk to start instantly in the background..."
+          docker exec -d -u abc vnc bash -c "DISPLAY=:1 rustdesk"
+
+      - name: Install and Start Cloudflared
+        run: |
+          echo "Starting Cloudflare HTTP Tunnel..."
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared-linux-amd64
+          # KasmVNC uses port 3000
+          ./cloudflared-linux-amd64 tunnel --url http://localhost:3000 > cloudflare.log 2>&1 &
+          
+          sleep 10
+          CF_URL=$(grep -a -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" cloudflare.log | head -n 1)
+          echo "WEB_URL=$CF_URL" >> $GITHUB_ENV
+
+      - name: Maintain Connection & Wait for SAVE Signal
+        run: |
+          echo -e "\n======================================================="
+          echo -e "          🌟 KASMVNC WEB DESKTOP IS READY 🌟           "
+          echo -e "=======================================================\n"
+          echo -e "👉 ${WEB_URL} 👈\n"
+          echo -e "=======================================================\n"
+          echo -e "RustDesk is already running in the background!"
+          echo -e "Remember to double-click '💾 SAVE AND SHUTDOWN' when finished."
+          echo -e "=======================================================\n"
+          
+          # Watch the new config directory for the SAVE file
+          while [ ! -f /home/runner/desktop-data/config/Desktop/SAVE ]; do
+            sleep 5
+          done
+          
+          echo "💾 SAVE signal detected! Shutting down to upload cache..."
+          
+          sudo rm -f /home/runner/desktop-data/config/Desktop/SAVE
+          sudo chown -R $USER:$USER /home/runner/desktop-data
+          
+          echo "Data prepared for GitHub Cache. Exiting gracefully..."
