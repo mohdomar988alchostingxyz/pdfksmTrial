@@ -21,13 +21,14 @@ jobs:
       - name: Start KasmVNC Desktop Environment (XFCE)
         run: |
           echo "Starting Ubuntu XFCE Desktop with KasmVNC..."
-          # Added port 3001 for secure WebSockets
-          docker run -d --name vnc -p 3000:3000 -p 3001:3001 \
+          # FIX: Changed PUID and PGID to 1001. This perfectly matches the GitHub runner,
+          # preventing the WebSocket 500 Database Crash!
+          docker run -d --name vnc -p 3000:3000 \
             --hostname web-desktop \
             --mac-address 02:42:00:11:22:33 \
             --security-opt seccomp=unconfined \
             --shm-size="2gb" \
-            -e PUID=1000 -e PGID=1000 -e TZ=UTC \
+            -e PUID=1001 -e PGID=1001 -e TZ=UTC \
             -v /home/runner/desktop-data/config:/config \
             lscr.io/linuxserver/webtop:ubuntu-xfce
 
@@ -50,7 +51,6 @@ jobs:
           docker exec -u root vnc bash -c "rm rustdesk-1.3.1-x86_64.deb"
           
           echo "Creating Desktop Shortcuts..."
-          # Using root (-u root) to bypass the permission denied error
           docker exec -u root vnc bash -c "mkdir -p /config/Desktop"
           
           docker exec -u root vnc bash -c 'cat <<EOF > /config/Desktop/Vivaldi.desktop
@@ -77,7 +77,7 @@ jobs:
           Type=Application
           EOF'
           
-          # Fix permissions and hand them back to the 'abc' user
+          # Fix permissions so the 'abc' container user can interact with the icons
           docker exec -u root vnc bash -c "chmod +x /config/Desktop/*.desktop"
           docker exec -u root vnc bash -c "chown -R abc:abc /config/Desktop"
 
@@ -87,17 +87,16 @@ jobs:
           docker exec -u root vnc bash -c "chown -R abc:abc /config/.config/autostart"
           
           echo "Forcing RustDesk to start instantly in the background..."
-          # Run Rustdesk normally as the 'abc' user
           docker exec -d -u abc vnc bash -c "DISPLAY=:1 rustdesk"
 
       - name: Install and Start Cloudflared
         run: |
-          echo "Starting Cloudflare HTTPS Tunnel..."
+          echo "Starting Cloudflare HTTP Tunnel..."
           wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared-linux-amd64
           
-          # Routing to the secure port 3001 and bypassing TLS verification to fix WebSockets
-          ./cloudflared-linux-amd64 tunnel --url https://localhost:3001 --no-tls-verify > cloudflare.log 2>&1 &
+          # We use standard HTTP port 3000 now that the backend isn't crashing
+          ./cloudflared-linux-amd64 tunnel --url http://localhost:3000 > cloudflare.log 2>&1 &
           
           sleep 10
           CF_URL=$(grep -a -oE "https://[a-zA-Z0-9-]+\.trycloudflare\.com" cloudflare.log | head -n 1)
@@ -114,7 +113,6 @@ jobs:
           echo -e "Remember to double-click '💾 SAVE AND SHUTDOWN' when finished."
           echo -e "=======================================================\n"
           
-          # Watch the new config directory for the SAVE file
           while [ ! -f /home/runner/desktop-data/config/Desktop/SAVE ]; do
             sleep 5
           done
